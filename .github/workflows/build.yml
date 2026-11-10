@@ -1,0 +1,61 @@
+name: Build SiriFix
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show SDK and Intents selectors
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDK: $SDK"
+          xcrun --sdk iphoneos --show-sdk-path
+          # Inspect the real INPreferences declarations in this SDK so a
+          # signature drift fails loudly here instead of silently at runtime.
+          grep -n "siriAuthorizationStatus\|requestSiriAuthorization" \
+            "$SDK/System/Library/Frameworks/Intents.framework/Headers/INPreferences.h" \
+            || echo "NOTE: selectors not found by grep in INPreferences.h"
+
+      - name: Build SiriFix.dylib
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          clang -arch arm64 -target arm64-apple-ios15.0 -isysroot "$SDK" \
+            -dynamiclib -framework Foundation -framework Intents -fobjc-arc -O2 \
+            -o SiriFix.dylib SiriFix.m
+
+      - name: Verify SiriFix.dylib
+        run: |
+          set -e
+          test -s SiriFix.dylib
+          file SiriFix.dylib
+          lipo -info SiriFix.dylib
+          lipo -verify_arch arm64 SiriFix.dylib
+          otool -L SiriFix.dylib
+          # The swizzle functions and the constructor must be present.
+          nm -arch arm64 SiriFix.dylib | grep -i SiriFix
+          # The constructor must be registered in __mod_init_func so it
+          # runs when the dylib is loaded by TweakLoader.
+          otool -s __DATA __mod_init_func SiriFix.dylib
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SiriFix-dylib
+          path: SiriFix.dylib
+
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "build-${{ github.run_number }}" SiriFix.dylib \
+            --title "SiriFix build ${{ github.run_number }}" \
+            --notes "Experimental LiveContainer tweak that stops VK crashing on launch (missing com.apple.developer.siri entitlement). See README for install steps. No guarantee — it only covers the INPreferences path."
