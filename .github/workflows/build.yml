@@ -38,7 +38,7 @@ jobs:
           test -s SiriFix.dylib
           file SiriFix.dylib
           lipo -info SiriFix.dylib
-          lipo -verify_arch arm64 SiriFix.dylib
+      lipo SiriFix.dylib -verify_arch arm64
           otool -L SiriFix.dylib
           # The swizzle functions and the constructor must be present.
           nm -arch arm64 SiriFix.dylib | grep -i SiriFix
